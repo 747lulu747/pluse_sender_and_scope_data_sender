@@ -7,19 +7,22 @@
 #include "pluse_gen.h"
 #include "STM32TimerInterrupt.h"
 #include "encoder.h"
+#include "pwm_encoder.h"
 
 
 /**********************************************************************/
 // macro define
 /**********************************************************************/
-#define LED_PIN								PD12
-#define PLUSE_COUNT_ROUND			(8000)
-#define SENSOR_COUNT_ROUD			(8000)
+#define LED_PIN									PD12
+#define PLUSE_COUNT_ROUND				(4000)
+#define SENSOR_COUNT_ROUD				(8000)
+#define SENSOR_ELEC_COUNT_ROND	(SENSOR_COUNT_ROUD/50)
 
 
 /**********************************************************************/
 // local variable
 /**********************************************************************/
+// HardwareTimer pwm_gen(TIM9);
 console con(Serial);
 pluse_gen *pg;
 
@@ -32,6 +35,18 @@ pluse_gen *pg;
 // STM32Timer report_timer(TIM2);
 encoder *e1;
 encoder *e2;
+
+pwm_encoder *pe1;
+
+/*
+use for staticstic
+*/
+float max_err = 0;
+
+/**
+ * angel to DAC
+*/
+DAC_HandleTypeDef hdac;
 
 
 /**********************************************************************/
@@ -101,6 +116,22 @@ void pg_sub(const char *cmd_line);
  */
 void report(void);
 
+/**
+ * encoder to pwm: 
+ *  @param:pg 							- pwm generator
+ *  @param:e 								- encoder
+ *  @return:               	- none
+ */
+void encoder_to_pwm(HardwareTimer &p, encoder *e);
+
+/**
+ * encoder to DAC: 
+ *  @param:pg 							- pwm generator
+ *  @param:e 								- encoder
+ *  @return:               	- none
+ */
+void encoder_to_dac(DAC_HandleTypeDef &p, encoder *e);
+
 
 /**********************************************************************/
 // function define
@@ -113,6 +144,9 @@ void setup() {
 	pg = pluse_gen::getInstance();
 	e1 = encoder::get_encoder_1();
 	e2 = encoder::get_encoder_2();
+
+	pe1 = pwm_encoder::get_pwm_encoder_1();
+	pe1->start();
 	
 	// register the call back function
 	// set target position and velocity
@@ -126,6 +160,35 @@ void setup() {
 	con.register_cmd('-', pg_sub);
 	con.set_scope_agency_flag(console::SIMPLE_SCOPE_FLAG);
 	con.start();
+
+	/**
+	 * angle to DAC
+	*/
+	DAC_ChannelConfTypeDef sConfig = {0};
+  hdac.Instance = DAC;
+  if (HAL_DAC_Init(&hdac) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** DAC channel OUT1 config
+  */
+  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
+  sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+  if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+	__HAL_RCC_DAC_CLK_ENABLE();
+	__HAL_RCC_GPIOA_CLK_ENABLE();
+	/**DAC GPIO Configuration
+	PA4     ------> DAC_OUT1
+	*/
+	GPIO_InitStruct.Pin = GPIO_PIN_4;
+	GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 	// Main loop task
   xTaskCreate(
@@ -151,9 +214,15 @@ void TaskPlue(void *pvParameters)  {
 
 	// report_timer.attachInterrupt(100, report);
   for (;;) {
-		report();
-		pg->run();
-		vTaskDelay(configTICK_RATE_HZ/100);
+		// report();
+		// pg->run();
+		// vTaskDelay(configTICK_RATE_HZ/500);
+		// encoder_to_pwm(NULL, e2);
+		// e_c = 50 * e->read() % SENSOR_COUNT_ROUD;
+		// encoder_to_dac(hdac, e2);
+		Serial.print("pe1 ");
+		Serial.println(pe1->_value);
+		vTaskDelay(configTICK_RATE_HZ/500);
   }
 }
 
@@ -194,6 +263,7 @@ void pg_set_velocity(const char *cmd_line) {
  */
 void pg_reset(const char *cmd_line) {
 	Serial.println("reset");
+	max_err = 0;
 	pg->reset();
 	e1->set(0);
 	e2->set(0);
@@ -284,56 +354,45 @@ void pg_sub(const char *cmd_line) {
  *  @return:               	- none
  */
 void report(void) {
-	int32_t cur_encoder_1, last_encoder_1 = 0;
-	int32_t cur_encoder_2, last_encoder_2 = 0;
+	float target;
+	float cur_encoder_1;
+	float delta;
 	
-	// Target
-	// con.set_channel_value(console::CH_1, pg->cur_pos);
-	con.set_channel_value(console::CH_1, pg->get_cur());
+	target = pg->get_cur();
+	cur_encoder_1 = (float)e1->read() * PLUSE_COUNT_ROUND / SENSOR_COUNT_ROUD;
+	delta = target - cur_encoder_1;
 
-	// encoder 1
-	cur_encoder_1 = e1->read();
-	// con.set_channel_value(console::CH_2, cur_encoder_1 * PLUSE_COUNT_ROUND / SENSOR_COUNT_ROUD);
+	if(max_err < abs(delta)) {
+		max_err = abs(delta);
+	}
+
+	con.set_channel_value(console::CH_1, target);
 	con.set_channel_value(console::CH_2, cur_encoder_1);
-	// con.set_channel_value(console::CH_3, (float)(cur_encoder_1 - last_encoder_1) * 100 / 8000);
-	// last_encoder_1 = cur_encoder_1;
-	
-	// encoder 2
-	// cur_encoder_2 = -encoder_2.read();
-	cur_encoder_2 = e2->read();
-	// con.set_channel_value(console::CH_2, cur_encoder_2 * PLUSE_COUNT_ROUND / SENSOR_COUNT_ROUD);
-	con.set_channel_value(console::CH_3, cur_encoder_2);
-	// con.set_channel_value(console::CH_5, (float)(cur_encoder_2 - last_encoder_2) * 100 / 8000);
-	last_encoder_2 = cur_encoder_2;
-
-	con.sync(1<<0 | 1<<1 | 1<<2);
+	con.set_channel_value(console::CH_3, delta);
+	con.set_channel_value(console::CH_4, max_err);
+	con.sync(1<<0 | 1<<1 | 1<<2 | 1<<3);
 }
 
-// if(current_pos == target_pule_cnt)
-// {
-// 	// 随机产生速度、方向、位置
-// 	srand(xTaskGetTickCount());
-// 	dir = rand() % 2;
-// 	target_pule_cnt = rand() % (ONE_CIRCLE_PLUE);
-// 	plue_fre = rand() % MAX_FRQ;
-// 	if(0 == plue_fre || plue_fre < 1000)
-// 	{
-// 		plue_fre = 1000;
-// 	}
-// 	Serial.print("DIR ");
-// 	Serial.print(dir);
-// 	Serial.print("\tTARGET POS ");
-// 	Serial.print(target_pos);
-// 	Serial.print("\tSPEED ");
-// 	Serial.println(plue_fre);
-// 	current_pos = 0;
-// 	if(dir)
-// 	{
-// 		digitalWrite(DIR_PIN, HIGH);
-// 	}
-// 	else
-// 	{
-// 		digitalWrite(DIR_PIN, LOW);
-// 	}
-// }
+/**
+ * encoder to pwm: 
+ *  @param:pg 							- pwm generator
+ *  @param:e 								- encoder
+ *  @return:               	- none
+ */
+void encoder_to_pwm(HardwareTimer &p, encoder *e) {
+	static uint32_t e_c = 0;
+	
+	e_c = 50 * e->read() % SENSOR_COUNT_ROUD;
+	p.setPWM(1, PE5, 10000, 50 * 100 * (float)e_c / SENSOR_COUNT_ROUD);
+}
 
+/**
+ * encoder to DAC: 
+ *  @param:p 								- dac generator
+ *  @param:e 								- encoder
+ *  @return:               	- none
+ */
+void encoder_to_dac(DAC_HandleTypeDef &p, encoder *e) {
+	HAL_DAC_SetValue(&p, DAC_CHANNEL_1, DAC_ALIGN_12B_R, 4096 * (float)e->read() / SENSOR_COUNT_ROUD );
+	HAL_DAC_Start(&p,DAC_CHANNEL_1);
+}

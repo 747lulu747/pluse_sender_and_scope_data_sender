@@ -1,6 +1,4 @@
 {
-	"editor.detectIndentation": false,
-	"editor.tabSize": 2,
 	"editor.formatOnPaste": true,
 	"editor.formatOnSave": true,
 	"files.associations": {
@@ -8,5 +6,7 @@
 		"*.tcc": "cpp",
 		"stm32f4xx_hal.h": "c",
 		"stm32f4xx_hal_conf.h": "c"
-	}
+	},
+	"editor.tabSize": 2,
+	"editor.detectIndentation": false
 }

@@ -33,14 +33,24 @@ extern "C" {
 		* @retval None
 		*/
 	void pluse_gen_update_callback(void) {
-
-		// Serial.println("pluse_gen_update_callback");
 		pluse_gen *instance = pluse_gen::getInstance();
 
-		if(instance->dir)
+		if(instance->dir) {
 			instance->cur_pos += (uint16_t)instance->interrupt_counter;
-		else
+			// if(instance->cur_pos+1 == instance->target_pos){
+			// 	instance->cur_pos++;
+			// 	instance->stop();
+			// 	return;
+			// }
+		}
+		else {
 			instance->cur_pos -= (uint16_t)instance->interrupt_counter;
+			// if(instance->cur_pos-1 == instance->target_pos){
+			// 	instance->cur_pos--;
+			// 	instance->stop();
+			// 	return;
+			// }
+		}
 
 		if(instance->cur_pos == instance->target_pos) {
 			instance->stop();
@@ -138,7 +148,7 @@ pluse_gen::pluse_gen()
 		_htim3.Instance = TIM3;
 		_htim3.Init.Prescaler = 0;
 		_htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-		_htim3.Init.Period = 4294967295;
+		_htim3.Init.Period = 0xFFFF;
 		_htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
 		_htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
 		HAL_TIM_Base_Init(&_htim3);
@@ -147,7 +157,7 @@ pluse_gen::pluse_gen()
 		HAL_TIM_ConfigClockSource(&_htim3, &sClockSourceConfig);
 		HAL_TIM_PWM_Init(&_htim3);
 
-		sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC1REF;
+		sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
 		sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_ENABLE;
 		HAL_TIMEx_MasterConfigSynchronization(&_htim3, &sMasterConfig);
 
@@ -219,24 +229,17 @@ void pluse_gen::pwm_pluse_start(void) {
 	/**
 	 * setting timer1
 	*/
-	// htim1.Init.Prescaler = 0;
-	// htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-	// htim1.Init.Period = interrupt_counter;
-	// htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-	// htim1.Init.RepetitionCounter = 0;
-	// htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
-	// HAL_TIM_Base_Init(&htim1);
 	__HAL_TIM_SET_AUTORELOAD(&htim1, interrupt_counter);
-  
-	// HAL_NVIC_SetPriority(TIM1_UP_TIM10_IRQn, 0, 0);
-  // HAL_NVIC_EnableIRQ(TIM1_UP_TIM10_IRQn);
 	HAL_TIM_Base_Start_IT(&htim1);
 
 	/**
-	 * setting timer5
-	*/
-  _htim3.Init.Period = _hwTimer3->getTimerClkFreq() / velocity;
+	 * setting timer3
+	 * */
+	uint32_t cycle = _hwTimer3->getTimerClkFreq() / velocity;
+	_htim3.Init.Prescaler = (cycle>>16) & 0xFFFF;
+	_htim3.Init.Period = cycle & 0xFFFF;
   HAL_TIM_Base_Init(&_htim3);
+
 	TIM_OC_InitTypeDef sConfigOC = {0};
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
   sConfigOC.Pulse = _htim3.Init.Period / 2;
